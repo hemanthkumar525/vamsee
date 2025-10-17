@@ -25,7 +25,7 @@ const corsOptions = {
     "http://localhost:5173", // Vite default
     "http://localhost:3000", // React default
     "undefined",
-    "seashell-caterpillar-640791.hostingersite.com",
+    "https://seashell-caterpillar-640791.hostingersite.com",
     "https://tan-aardvark-644850.hostingersite.com"
   ],
   credentials: true,
