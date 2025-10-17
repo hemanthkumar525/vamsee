@@ -2,34 +2,57 @@ import asyncHandler from "express-async-handler";
 import jwt from "jsonwebtoken";
 import User from "../models/userModel.js";
 
+const jwt = require("jsonwebtoken");
+const asyncHandler = require("express-async-handler");
+const User = require("../models/userModel"); // Assuming you have a User model
+
 const protectRoute = asyncHandler(async (req, res, next) => {
-  let token = req.cookies.token;
+  let token;
+
+  // 1. Check for token in both Authorization header and cookies for flexibility
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith("Bearer")
+  ) {
+    token = req.headers.authorization.split(" ")[1];
+  } else if (req.cookies.token) {
+    token = req.cookies.token;
+  }
 
   if (token) {
     try {
+      // 2. Verify the token
       const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
 
-      const resp = await User.findById(decodedToken.userId).select(
-        "isAdmin email"
-      );
+      // 3. Find user but exclude the password field for security
+      const user = await User.findById(decodedToken.userId).select("-password");
 
-      req.user = {
-        email: resp.email,
-        isAdmin: resp.isAdmin,
-        userId: decodedToken.userId,
-      };
+      // 4. CRITICAL: Check if the user still exists in the database
+      if (!user) {
+        return res.status(401).json({
+          status: false,
+          message: "Not authorized. User not found.",
+        });
+      }
+
+      // 5. Attach the user object to the request
+      req.user = user; // Now you have access to the full user object (e.g., req.user.name)
 
       next();
     } catch (error) {
       console.error(error);
-      return res
-        .status(401)
-        .json({ status: false, message: "Not authorized. Try login again." });
+      // More specific error message for different JWT errors can be useful for debugging
+      let message = "Not authorized. Token failed.";
+      if (error.name === 'TokenExpiredError') {
+        message = "Not authorized. Token has expired.";
+      }
+      return res.status(401).json({ status: false, message });
     }
   } else {
+    // No token was found at all
     return res
       .status(401)
-      .json({ status: false, message: "Not authorized. Try login again." });
+      .json({ status: false, message: "Not authorized. No token provided." });
   }
 });
 
