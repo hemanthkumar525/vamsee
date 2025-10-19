@@ -93,20 +93,17 @@ const logoutUser = (req, res) => {
 };
  
 // @GET -   Get user profile
-// const getUserProfile = asyncHandler(async (req, res) => {
-//   const { userId } = req.user;
+const getUserProfile = asyncHandler(async (req, res) => {
+  const { userId } = req.user;
  
-//   const user = await User.findById(userId);
+  const user = await User.findById(userId).select("-password");
  
-//   user.password = undefined;
+  if (!user) {
+    return res.status(404).json({ status: false, message: "User not found" });
+  }
  
-//   if (user) {
-//     res.json({ ...user });
-//   } else {
-//     res.status(404);
- 
-//   }
-// });
+  res.status(200).json({ user });
+});
  
 const getTeamList = asyncHandler(async (req, res) => {
   const { search } = req.query;
@@ -361,6 +358,7 @@ export {
   changeUserPassword,
   deleteUserProfile,
   forgotPassword,
+  getUserProfile,
   getNotificationsList,
   getTeamList,
   getUserTaskStatus,
@@ -371,5 +369,3 @@ export {
   resetPassword,
   updateUserProfile,
 };
- 
- 
