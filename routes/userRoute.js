@@ -6,6 +6,7 @@ import {
   forgotPassword,
   getNotificationsList,
   getTeamList,
+  getUserProfile,
   getUserTaskStatus,
   loginUser,
   logoutUser,
