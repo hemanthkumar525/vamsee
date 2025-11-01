@@ -1,5 +1,5 @@
 import mongoose, { Schema } from "mongoose";
-
+ 
 const taskSchema = new Schema(
   {
     title: { type: String, required: true },
@@ -48,6 +48,7 @@ const taskSchema = new Schema(
     assignedTo: { type: Schema.Types.ObjectId, ref: "User" },
     assignedBy: { type: Schema.Types.ObjectId, ref: "User" },
     isTrashed: { type: Boolean, default: false },
+    isGoal: { type: Boolean, default: false },
     project: { type: Schema.Types.ObjectId, ref: "Project" }, // Reference to Project
     startDate: { type: Date }, // Task start date
     endDate: { type: Date },   // Task end date
@@ -55,7 +56,9 @@ const taskSchema = new Schema(
   },
   { timestamps: true }
 );
-
+ 
 const Task = mongoose.model("Task", taskSchema);
-
+ 
 export default Task;
+ 
+ 
