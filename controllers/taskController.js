@@ -1,3 +1,4 @@
+
 import asyncHandler from "express-async-handler";
 import mongoose from "mongoose";
 import Notice from "../models/notis.js";
@@ -7,7 +8,7 @@ import User from "../models/userModel.js";
 const createTask = asyncHandler(async (req, res) => {
   try {
     const { userId } = req.user;
-    const { title, team, stage, date, priority, assets, links, description, assignedTo, project, startDate, endDate, tags } = req.body;
+    const { title, team, stage, date, priority, assets, links, description, assignedTo, project, startDate, endDate, tags, isGoal } = req.body;
  
     // Ensure the creator is always in the team
     let updatedTeam = team || [];
@@ -54,6 +55,7 @@ const createTask = asyncHandler(async (req, res) => {
       startDate: startDate || null,
       endDate: endDate || null,
       tags: Array.isArray(tags) ? tags : [],
+      isGoal: !!isGoal,
     });
  
     await Notice.create({
@@ -252,7 +254,7 @@ const getTasks = asyncHandler(async (req, res) => {
   const { userId, isAdmin } = req.user;
   const { stage, isTrashed, search, member } = req.query;
  
-  let query = { isTrashed: isTrashed ? true : false };
+  let query = { isTrashed: isTrashed ? true : false, isGoal: false };
  
   if (member) {
     if (mongoose.Types.ObjectId.isValid(member)) {
@@ -501,11 +503,11 @@ const getGoals = asyncHandler(async (req, res) => {
     const { userId, isAdmin } = req.user;
  
     const allTasks = isAdmin
-      ? await Task.find({ isTrashed: false })
+      ? await Task.find({ isTrashed: false, isGoal: true })
           .populate({ path: "team", select: "name role title email" })
           .populate({ path: "project", select: "name" })
           .sort({ _id: -1 })
-      : await Task.find({ isTrashed: false, team: { $all: [userId] } })
+      : await Task.find({ isTrashed: false, isGoal: true, team: { $all: [userId] } })
           .populate({ path: "team", select: "name role title email" })
           .populate({ path: "project", select: "name" })
           .sort({ _id: -1 });
@@ -530,19 +532,17 @@ const getGoals = asyncHandler(async (req, res) => {
       };
     };
  
+    const parseDate = (value) => (value ? new Date(value) : null);
+ 
     const weeklyGoals = upcoming
-      .filter((task) => {
-        const dueDate = task.endDate || task.date || task.updatedAt;
-        return dueDate && dueDate >= now && dueDate <= endOfWeek;
-      })
-      .map(formatGoal);
+      .map((task) => ({ task, dueDate: parseDate(task.endDate || task.date || task.updatedAt) }))
+      .filter(({ dueDate }) => dueDate && dueDate >= now && dueDate <= endOfWeek)
+      .map(({ task }) => formatGoal(task));
  
     const monthlyGoals = upcoming
-      .filter((task) => {
-        const dueDate = task.endDate || task.date || task.updatedAt;
-        return dueDate && dueDate > endOfWeek && dueDate <= endOfMonth;
-      })
-      .map(formatGoal);
+      .map((task) => ({ task, dueDate: parseDate(task.endDate || task.date || task.updatedAt) }))
+      .filter(({ dueDate }) => dueDate && dueDate > endOfWeek && dueDate <= endOfMonth)
+      .map(({ task }) => formatGoal(task));
  
     res.status(200).json({ status: true, weeklyGoals, monthlyGoals });
   } catch (error) {
@@ -565,4 +565,5 @@ export {
   updateTask,
   updateTaskStage,
 };
+ 
  
