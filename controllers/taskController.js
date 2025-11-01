@@ -1,4 +1,3 @@
-
 import asyncHandler from "express-async-handler";
 import mongoose from "mongoose";
 import Notice from "../models/notis.js";
@@ -501,16 +500,31 @@ const dashboardStatistics = asyncHandler(async (req, res) => {
 const getGoals = asyncHandler(async (req, res) => {
   try {
     const { userId, isAdmin } = req.user;
+    const { member } = req.query;
  
-    const allTasks = isAdmin
-      ? await Task.find({ isTrashed: false, isGoal: true })
-          .populate({ path: "team", select: "name role title email" })
-          .populate({ path: "project", select: "name" })
-          .sort({ _id: -1 })
-      : await Task.find({ isTrashed: false, isGoal: true, team: { $all: [userId] } })
-          .populate({ path: "team", select: "name role title email" })
-          .populate({ path: "project", select: "name" })
-          .sort({ _id: -1 });
+    // Base query for goals
+    const baseQuery = { isTrashed: false, isGoal: true };
+ 
+    // Restrict non-admins to their own team
+    if (!isAdmin) {
+      baseQuery.team = { $all: [userId] };
+    }
+ 
+    // Optional member filter (only applied if provided and valid)
+    if (member && mongoose.Types.ObjectId.isValid(member)) {
+      const memberId = new mongoose.Types.ObjectId(member);
+      if (!isAdmin) {
+        // Non-admin: must include both self and selected member
+        baseQuery.team = { $all: [userId, memberId] };
+      } else {
+        baseQuery.team = { $all: [memberId] };
+      }
+    }
+ 
+    const allTasks = await Task.find(baseQuery)
+      .populate({ path: "team", select: "name role title email" })
+      .populate({ path: "project", select: "name" })
+      .sort({ _id: -1 });
  
     const now = new Date();
     const endOfWeek = new Date(now);
