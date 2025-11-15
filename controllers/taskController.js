@@ -194,6 +194,73 @@ const updateTaskStage = asyncHandler(async (req, res) => {
   }
 });
  
+// Start task timer
+const startTaskTimer = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { userId } = req.user;
+ 
+  const task = await Task.findById(id);
+  if (!task) return res.status(404).json({ status: false, message: "Task not found" });
+  if (task.runningTimer?.startedAt) {
+    return res.status(400).json({ status: false, message: "Timer already running" });
+  }
+ 
+  // Resolve names for clearer activity log
+  const [byUser, responsible] = await Promise.all([
+    User.findById(userId).select("name email"),
+    task.assignedTo ? User.findById(task.assignedTo).select("name email") : null,
+  ]);
+ 
+  const byName = byUser?.name || byUser?.email || "Someone";
+  const respName = responsible?.name || responsible?.email || "Unassigned";
+ 
+  task.runningTimer = { startedAt: new Date(), startedBy: userId };
+  task.activities.push({
+    type: "started",
+    activity: `${byName} started the timer (responsible: ${respName}).`,
+    by: userId,
+  });
+  await task.save();
+ 
+  res.status(200).json({ status: true, message: "Timer started", task });
+});
+ 
+// Stop task timer
+const stopTaskTimer = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { userId } = req.user;
+ 
+  const task = await Task.findById(id);
+  if (!task) return res.status(404).json({ status: false, message: "Task not found" });
+  if (!task.runningTimer?.startedAt) {
+    return res.status(400).json({ status: false, message: "No running timer" });
+  }
+ 
+  const startedAt = new Date(task.runningTimer.startedAt).getTime();
+  const now = Date.now();
+  const delta = Math.max(0, now - startedAt);
+ 
+  // Resolve names for clearer activity log
+  const [byUser, responsible] = await Promise.all([
+    User.findById(userId).select("name email"),
+    task.assignedTo ? User.findById(task.assignedTo).select("name email") : null,
+  ]);
+ 
+  const byName = byUser?.name || byUser?.email || "Someone";
+  const respName = responsible?.name || responsible?.email || "Unassigned";
+ 
+  task.totalTrackedMs = (task.totalTrackedMs || 0) + delta;
+  task.runningTimer = undefined;
+  task.activities.push({
+    type: "in progress",
+    activity: `${byName} stopped the timer (+${Math.round(delta/1000)}s) (responsible: ${respName}).`,
+    by: userId,
+  });
+  await task.save();
+ 
+  res.status(200).json({ status: true, message: "Timer stopped", task });
+});
+ 
 const updateSubTaskStage = asyncHandler(async (req, res) => {
   try {
     const { taskId, subTaskId } = req.params;
@@ -291,7 +358,7 @@ const getTasks = asyncHandler(async (req, res) => {
       path: "project",
       select: "name _id",
     })
-    .sort({ _id: -1 });
+    .sort({ updatedAt: -1 });
  
   const tasks = await queryResult;
  
@@ -418,7 +485,7 @@ const dashboardStatistics = asyncHandler(async (req, res) => {
             path: "team",
             select: "name role title email",
           })
-          .sort({ _id: -1 })
+          .sort({ updatedAt: -1 })
       : await Task.find({
           isTrashed: false,
           team: { $all: [userId] },
@@ -427,7 +494,7 @@ const dashboardStatistics = asyncHandler(async (req, res) => {
             path: "team",
             select: "name role title email",
           })
-          .sort({ _id: -1 });
+          .sort({ updatedAt: -1 });
  
     const users = await User.find({ isActive: true })
       .select("name title role isActive createdAt")
@@ -467,18 +534,36 @@ const dashboardStatistics = asyncHandler(async (req, res) => {
  
     const upcoming = allTasks.filter((task) => task.stage !== "completed");
  
+    // Build upcoming goals (weekly/monthly) with flags
     const formatGoal = (task) => {
-      const dueDate = task.endDate || task.date || task.updatedAt || task.createdAt;
+      const rawDue = task.endDate || task.date || task.updatedAt || task.createdAt;
+      const dueDate = rawDue ? new Date(rawDue) : null;
+      const nowTs = Date.now();
+      const dueTs = dueDate ? dueDate.getTime() : 0;
+      const isExpired = !!dueDate && dueTs < nowTs && task.stage !== 'completed';
+      const isNearDue = !!dueDate && dueTs >= nowTs && (dueTs - nowTs) <= 48 * 60 * 60 * 1000 && task.stage !== 'completed';
       return {
         _id: task._id,
         title: task.title,
         priority: task.priority,
         stage: task.stage,
         dueDate,
+        isExpired,
+        isNearDue,
         project: task.project,
         team: task.team,
       };
     };
+ 
+    const parseDate = (value) => (value ? new Date(value) : null);
+    const weeklyGoals = upcoming
+      .map((task) => ({ task, dueDate: parseDate(task.endDate || task.date || task.updatedAt) }))
+      .filter(({ dueDate }) => dueDate && dueDate >= now && dueDate <= endOfWeek)
+      .map(({ task }) => formatGoal(task));
+    const monthlyGoals = upcoming
+      .map((task) => ({ task, dueDate: parseDate(task.endDate || task.date || task.updatedAt) }))
+      .filter(({ dueDate }) => dueDate && dueDate > endOfWeek && dueDate <= endOfMonth)
+      .map(({ task }) => formatGoal(task));
  
     const summary = {
       totalTasks,
@@ -486,6 +571,8 @@ const dashboardStatistics = asyncHandler(async (req, res) => {
       users: isAdmin ? users : [],
       tasks: groupedTasks,
       graphData,
+      weeklyGoals,
+      monthlyGoals,
     };
  
     res
@@ -534,13 +621,20 @@ const getGoals = asyncHandler(async (req, res) => {
     const upcoming = allTasks.filter((task) => task.stage !== "completed");
  
     const formatGoal = (task) => {
-      const dueDate = task.endDate || task.date || task.updatedAt || task.createdAt;
+      const rawDue = task.endDate || task.date || task.updatedAt || task.createdAt;
+      const dueDate = rawDue ? new Date(rawDue) : null;
+      const nowTs = Date.now();
+      const dueTs = dueDate ? dueDate.getTime() : 0;
+      const isExpired = !!dueDate && dueTs < nowTs && task.stage !== 'completed';
+      const isNearDue = !!dueDate && dueTs >= nowTs && (dueTs - nowTs) <= 48 * 60 * 60 * 1000 && task.stage !== 'completed';
       return {
         _id: task._id,
         title: task.title,
         priority: task.priority,
         stage: task.stage,
         dueDate,
+        isExpired,
+        isNearDue,
         project: task.project,
         team: task.team,
       };
@@ -558,7 +652,17 @@ const getGoals = asyncHandler(async (req, res) => {
       .filter(({ dueDate }) => dueDate && dueDate > endOfWeek && dueDate <= endOfMonth)
       .map(({ task }) => formatGoal(task));
  
-    res.status(200).json({ status: true, weeklyGoals, monthlyGoals });
+    const expiredGoals = upcoming
+      .map((task) => ({ task, dueDate: parseDate(task.endDate || task.date || task.updatedAt) }))
+      .filter(({ dueDate }) => dueDate && dueDate < now)
+      .map(({ task }) => formatGoal(task));
+ 
+    const laterGoals = upcoming
+      .map((task) => ({ task, dueDate: parseDate(task.endDate || task.date || task.updatedAt) }))
+      .filter(({ dueDate }) => !dueDate || dueDate > endOfMonth)
+      .map(({ task }) => formatGoal(task));
+ 
+    res.status(200).json({ status: true, weeklyGoals, monthlyGoals, expiredGoals, laterGoals });
   } catch (error) {
     return res.status(400).json({ status: false, message: error.message });
   }
@@ -578,6 +682,8 @@ export {
   updateSubTaskStage,
   updateTask,
   updateTaskStage,
+  startTaskTimer,
+  stopTaskTimer,
 };
  
  
